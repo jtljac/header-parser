@@ -4,6 +4,8 @@
 #include <string>
 #include <array>
 
+#include "Nodes/Enums/ConstType.h"
+
 enum class TokenType
 {
   kNone,
@@ -12,16 +14,7 @@ enum class TokenType
   kConst
 };
 
-enum class ConstType
-{
-  kString,
-  kBoolean,
-  kUInt32,
-  kInt32,
-  kUInt64,
-  kInt64,
-  kReal
-};
+
 
 struct Token
 {

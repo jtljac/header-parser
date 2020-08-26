@@ -2,7 +2,9 @@
 
 #include "tokenizer.h"
 #include "options.h"
-#include "type_node.h"
+#include "Nodes/FileNode.h"
+#include "Nodes/type_node.h"
+#include "Nodes/Enums/AccessControlType.h"
 #include <string>
 #include <rapidjson/prettywriter.h>
 #include <rapidjson/stringbuffer.h>
@@ -12,13 +14,6 @@ enum class ScopeType
   kGlobal,
   kNamespace,
   kClass
-};
-
-enum class AccessControlType 
-{
-  kPublic,
-  kPrivate,
-  kProtected
 };
 
 class Parser : private Tokenizer
@@ -45,8 +40,8 @@ protected:
   bool SkipDeclaration(Token &token);
   bool ParseProperty(Token &token);
   bool ParseEnum(Token &token);
-  bool ParseMacroMeta();
-  bool ParseMetaSequence();
+  bool ParseMacroMeta(MetaNode& node);
+  bool ParseMetaSequence(MetaNode& node);
 
   void PushScope(const std::string& name, ScopeType scopeType, AccessControlType accessControlType);
   void PopScope();
@@ -59,10 +54,10 @@ protected:
 
   void WriteAccessControlType(AccessControlType type);
   bool ParseClass(Token &token);
-  bool ParseClassTemplate();
+  bool ParseTemplate();
   bool ParseFunction(Token &token, const std::string& macroName);
 
-  bool ParseComment();
+  bool ParseComment(Node& theNode);
 
   bool ParseType();
 
@@ -74,8 +69,13 @@ protected:
   void WriteToken(const Token &token);
   bool ParseCustomMacro(Token & token, const std::string& macroName);
 
+  ContainerNode& getCurrentContainer();
+
 private:
   Options options_;
+  FileNode nodes;
+  NamespaceNode* currentNamespace = nullptr;
+  ClassNode* currentClass = nullptr;
   rapidjson::StringBuffer buffer_;
   rapidjson::PrettyWriter<rapidjson::StringBuffer> writer_;
 

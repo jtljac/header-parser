@@ -45,7 +45,7 @@ public:
 
 enum IgnoredNumbers
 {
-  Four = 4,
+  Four = 4, 
   Five,
 };
 

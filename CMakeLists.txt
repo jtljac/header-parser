@@ -9,8 +9,12 @@ SET(SOURCES
   "tokenizer.h"
   "parser.cc"
   "parser.h"
-  "type_node.h"
-  )
+  "Nodes/type_node.h"
+  "Nodes/FileNode.h"
+  "Nodes/NamespaceNode.h"
+  "Nodes/Enums/AccessControltype.h"
+  "Nodes/NamespaceNode.h"
+   "Nodes/FuncNode.h" "Nodes/Node.h" "Nodes/MetaNode.h" "Nodes/Enums/ConstType.h" "Nodes/EnumNode.h" "Nodes/BaseNode.h" "Nodes/PropNode.h" "Nodes/CustomMacroNode.h" "Nodes/ContainerNode.h")
 
 INCLUDE_DIRECTORIES(
 	"${PROJECT_SOURCE_DIR}/external/rapidjson/include"

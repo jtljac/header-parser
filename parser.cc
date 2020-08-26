@@ -5,6 +5,8 @@
 #include "token.h"
 #include <cstdarg>
 
+//TODO: Get types and stuff for arguments and props, template info, access specifiers
+
 //-------------------------------------------------------------------------------------------------
 // Class used to write a typenode structure to json
 //-------------------------------------------------------------------------------------------------
@@ -143,7 +145,7 @@ bool Parser::Parse(const char *input)
 
   // Start the array
   writer_.StartArray();
-
+  
   // Reset scope
   topScope_ = scopes_;
   topScope_->name = "";
@@ -222,6 +224,8 @@ bool Parser::ParseDirective()
     Token includeToken;
     GetToken(includeToken, true);
 
+    nodes.includes.push_back(includeToken.token);
+
     writer_.StartObject();
     writer_.String("type");
     writer_.String("include");
@@ -270,15 +274,18 @@ bool Parser::SkipDeclaration(Token &token)
 //--------------------------------------------------------------------------------------------------
 bool Parser::ParseEnum(Token &startToken)
 {
+  EnumNode node;
   writer_.StartObject();
   writer_.String("type");
   writer_.String("enum");
   writer_.String("line");
   writer_.Uint((unsigned)startToken.startLine);
 
+  node.line = startToken.startLine;
+
   WriteCurrentAccessControlType();
 
-  if (!ParseMacroMeta())
+  if (!ParseMacroMeta(node))
     return false;
 
   if (!RequireIdentifier("enum"))
@@ -287,6 +294,8 @@ bool Parser::ParseEnum(Token &startToken)
   // C++1x enum class type?
   bool isEnumClass = MatchIdentifier("class");
 
+  node.isEnumClass = isEnumClass;
+
   // Parse enum name
   Token enumToken;
   if (!GetIdentifier(enumToken))
@@ -294,6 +303,8 @@ bool Parser::ParseEnum(Token &startToken)
 
   writer_.String("name");
   writer_.String(enumToken.token.c_str());
+
+  node.name = enumToken.token;
 
   if (isEnumClass)
   {
@@ -311,6 +322,8 @@ bool Parser::ParseEnum(Token &startToken)
     // Validate base token
     writer_.String("base");
     writer_.String(baseToken.token.c_str());
+    Base newBase{ AccessControlType::kPublic, baseToken.token };
+    node.bases.push_back(newBase);
   }
 
   // Require opening brace
@@ -358,18 +371,19 @@ bool Parser::ParseEnum(Token &startToken)
   MatchSymbol(";");
 
   writer_.EndObject();
+  getCurrentContainer().enums .emplace(node.name, node);
 
   return true;
 }
 
 //--------------------------------------------------------------------------------------------------
-bool Parser::ParseMacroMeta()
+bool Parser::ParseMacroMeta(MetaNode& node)
 {
   writer_.String("meta");
 
   if (!RequireSymbol("("))
     return false;
-  if (!ParseMetaSequence())
+  if (!ParseMetaSequence(node))
     return false;
 
   // Possible ;
@@ -379,7 +393,7 @@ bool Parser::ParseMacroMeta()
 }
 
 //--------------------------------------------------------------------------------------------------
-bool Parser::ParseMetaSequence()
+bool Parser::ParseMetaSequence(MetaNode& node)
 {
   writer_.StartObject();
 
@@ -389,28 +403,42 @@ bool Parser::ParseMetaSequence()
     {
       // Parse key value
       Token keyToken;
+
       if (!GetIdentifier(keyToken))
         return Error("Expected identifier in meta sequence");
 
       writer_.String(keyToken.token.c_str());
 
+
       // Simple value?
       if (MatchSymbol("=")) {
         Token token;
+        Meta meta;
         if (!GetToken(token))
           throw; // Expected token
 
+        meta.name = keyToken.token;
+        meta.setValue(token);
+        node.meta.push_back(meta);
         WriteToken(token);
       }
       // Compound value
       else if (MatchSymbol("("))
       {
-        if (!ParseMetaSequence())
+        MetaNode newNode;
+        if (!ParseMetaSequence(newNode))
           return false;
         // No value
+        node.compoundMeta.emplace(keyToken.token, newNode);
       }
-      else
-        writer_.Null();
+      else 
+      {
+          writer_.Null();
+          Meta meta;
+          meta.name = keyToken.token;
+          meta.constType = ConstType::kNull;
+          node.meta.push_back(meta);
+      }
     } while (MatchSymbol(","));
 
     MatchSymbol(")");
@@ -444,6 +472,7 @@ void Parser::PopScope()
 //--------------------------------------------------------------------------------------------------
 bool Parser::ParseNamespace()
 {
+  NamespaceNode node;
   writer_.StartObject();
   writer_.String("type");
   writer_.String("namespace");
@@ -455,6 +484,8 @@ bool Parser::ParseNamespace()
   writer_.String("name");
   writer_.String(token.token.c_str());
 
+  node.name = token.token;
+
   if (!RequireSymbol("{"))
     return false;
 
@@ -463,15 +494,21 @@ bool Parser::ParseNamespace()
 
   PushScope(token.token, ScopeType::kNamespace, AccessControlType::kPublic);
 
+  NamespaceNode* oldNamespace = currentNamespace;
+  currentNamespace = &node;
   while (!MatchSymbol("}"))
     if (!ParseStatement())
       return false;
 
   PopScope();
+  currentNamespace = oldNamespace;
 
   writer_.EndArray();
 
   writer_.EndObject();
+  if (currentNamespace != nullptr) currentNamespace->namespaces.emplace(node.name, node);
+  else nodes.namespaces.emplace(node.name, node);
+
   return true;
 }
 
@@ -530,19 +567,21 @@ void Parser::WriteAccessControlType(AccessControlType type)
 //--------------------------------------------------------------------------------------------------
 bool Parser::ParseClass(Token &token)
 {
+  ClassNode node;
   writer_.StartObject();
   writer_.String("type");
   writer_.String("class");
   writer_.String("line");
   writer_.Uint((unsigned)token.startLine);
+  node.line = token.startLine;
 
   WriteCurrentAccessControlType();
-  if (!ParseComment())
+  if (!ParseComment(node))
     return false;
-  if (!ParseMacroMeta())
+  if (!ParseMacroMeta(node))
     return false;
 
-  if(MatchIdentifier("template") && !ParseClassTemplate())
+  if(MatchIdentifier("template") && !ParseTemplate())
     return false;
 
   bool isStruct = MatchIdentifier("struct");
@@ -552,6 +591,8 @@ bool Parser::ParseClass(Token &token)
   writer_.String("isstruct");
   writer_.Bool(isStruct);
 
+  node.isStruct = isStruct;
+
   // Get the class name
   Token classNameToken;
   if(!GetIdentifier(classNameToken))
@@ -559,6 +600,7 @@ bool Parser::ParseClass(Token &token)
 
   writer_.String("name");
   writer_.String(classNameToken.token.c_str());
+  node.name = classNameToken.token;
 
   // Match base types
   if(MatchSymbol(":"))
@@ -568,6 +610,7 @@ bool Parser::ParseClass(Token &token)
 
     do
     {
+      Base newBase;
       writer_.StartObject();
 
       Token accessOrName;
@@ -579,6 +622,7 @@ bool Parser::ParseClass(Token &token)
       if (!ParseAccessControl(accessOrName, accessControlType))
         UngetToken(accessOrName);
       WriteAccessControlType(accessControlType);
+      newBase.access = accessControlType;
       
       // Get the name of the class
       writer_.String("name");
@@ -600,9 +644,13 @@ bool Parser::ParseClass(Token &token)
 
   PushScope(classNameToken.token, ScopeType::kClass, isStruct ? AccessControlType::kPublic : AccessControlType::kPrivate);
 
+  ClassNode* oldClass = currentClass;
+  currentClass = &node;
   while (!MatchSymbol("}"))
     if (!ParseStatement())
       return false;
+
+  currentClass = oldClass;
 
   PopScope();
 
@@ -612,19 +660,24 @@ bool Parser::ParseClass(Token &token)
     return false;
 
   writer_.EndObject();
+  getCurrentContainer().classes.emplace(node.name, node);
+
   return true;
 }
 
 //-------------------------------------------------------------------------------------------------
 bool Parser::ParseProperty(Token &token)
 {
+  PropNode node;
   writer_.StartObject();
   writer_.String("type");
   writer_.String("property");
   writer_.String("line");
   writer_.Uint((unsigned) token.startLine);
 
-  if (!ParseMacroMeta())
+  node.line = token.startLine;
+
+  if (!ParseMacroMeta(node))
     return false;
 
   WriteCurrentAccessControlType();
@@ -663,6 +716,7 @@ bool Parser::ParseProperty(Token &token)
 
   writer_.String("name");
   writer_.String(nameToken.token.c_str());
+  node.name = nameToken.token;
 
   // Parse array
   writer_.String("elements");
@@ -684,6 +738,8 @@ bool Parser::ParseProperty(Token &token)
 
   writer_.EndObject();
 
+  getCurrentContainer().members.emplace(node.name, node);
+
 
   // Skip until the end of the definition
   Token t;
@@ -695,8 +751,11 @@ bool Parser::ParseProperty(Token &token)
 }
 
 //--------------------------------------------------------------------------------------------------
+
 bool Parser::ParseFunction(Token &token, const std::string& macroName)
 {
+  FuncNode node;
+
   writer_.StartObject();
   writer_.String("type");
   writer_.String("function");
@@ -705,13 +764,18 @@ bool Parser::ParseFunction(Token &token, const std::string& macroName)
   writer_.String("line");
   writer_.Uint((unsigned) token.startLine);
 
-  if (!ParseComment())
+  node.line = token.startLine;
+
+  if (!ParseComment(node))
     return false;
   
-  if (!ParseMacroMeta())
+  if (!ParseMacroMeta(node))
     return false;
 
   WriteCurrentAccessControlType();
+
+  if (MatchIdentifier("template") && !ParseTemplate())
+      return false;
 
   // Process method specifiers in any particular order
   bool isVirtual = false, isInline = false, isConstExpr = false, isStatic = false;
@@ -757,6 +821,7 @@ bool Parser::ParseFunction(Token &token, const std::string& macroName)
 
   writer_.String("name");
   writer_.String(nameToken.token.c_str());
+  node.name = nameToken.token;
 
   writer_.String("arguments");
   writer_.StartArray();
@@ -837,6 +902,8 @@ bool Parser::ParseFunction(Token &token, const std::string& macroName)
 
   writer_.EndObject();
 
+  getCurrentContainer().functions.emplace(node.name, node);
+
   // Skip either the ; or the body of the function
   Token skipToken;
   if (!SkipDeclaration(skipToken))
@@ -845,13 +912,13 @@ bool Parser::ParseFunction(Token &token, const std::string& macroName)
 }
 
 //-------------------------------------------------------------------------------------------------
-bool Parser::ParseComment()
+bool Parser::ParseComment(Node& theNode)
 {
-  std::string comment = lastComment_.endLine == cursorLine_ ? lastComment_.text : "";
-  if (!comment.empty())
+    theNode.comment = lastComment_.endLine == cursorLine_ ? lastComment_.text : "";
+  if (!theNode.comment.empty())
   {
     writer_.String("comment");
-    writer_.String(comment.c_str());
+    writer_.String(theNode.comment.c_str());
   }
 
   return true;
@@ -897,6 +964,7 @@ std::unique_ptr<TypeNode> Parser::ParseTypeNode()
       auto node = ParseTypeNode();
       if (node == nullptr)
         return nullptr;
+
       templateNode->arguments.emplace_back(std::move(node));
     } while (MatchSymbol(","));
 
@@ -1070,6 +1138,7 @@ void Parser::WriteToken(const Token &token)
 //-------------------------------------------------------------------------------------------------
 bool Parser::ParseCustomMacro(Token & token, const std::string& macroName)
 {
+  CustomMacroNode node;
   writer_.StartObject();
   writer_.String("type");
   writer_.String("macro");
@@ -1077,18 +1146,30 @@ bool Parser::ParseCustomMacro(Token & token, const std::string& macroName)
   writer_.String(macroName.c_str());
   writer_.String("line");
   writer_.Uint((unsigned) token.startLine);
+  node.line = token.startLine;
 
   WriteCurrentAccessControlType();
 
-  if (!ParseMacroMeta())
+  if (!ParseComment(node))
+      return false;
+
+  if (!ParseMacroMeta(node))
     return false;
 
   writer_.EndObject();
+  getCurrentContainer().customMacros.push_back(node);
   return true;
 }
 
+ContainerNode& Parser::getCurrentContainer()
+{
+    if (currentClass != nullptr) return (ContainerNode&)*currentClass;
+    else if (currentNamespace != nullptr) return (ContainerNode&)*currentNamespace;
+    else return (ContainerNode&)nodes;
+}
+
 //-------------------------------------------------------------------------------------------------
-bool Parser::ParseClassTemplate()
+bool Parser::ParseTemplate()
 {
   writer_.String("template");
   writer_.StartObject();
